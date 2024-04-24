@@ -113,7 +113,7 @@ export class Status implements StatusResolver {
   }
 
   async checkStatus(credential: CredentialJwtOrJSON, didDoc: DIDDocument): Promise<CredentialStatus> {
-    let statusEntry: StatusEntry | undefined = undefined
+    let statusEntry: StatusEntry[] | StatusEntry | undefined = undefined
 
     if (typeof credential === 'string') {
       try {
@@ -140,10 +140,17 @@ export class Status implements StatusResolver {
         revoked: false,
         message: 'credentialStatus property was not set on the original credential',
       }
-    } else if (typeof statusEntry !== 'object' || !statusEntry?.type) {
+    } else if (typeof statusEntry === 'object' && (statusEntry as StatusEntry)?.type) {
+      statusEntry = statusEntry as StatusEntry
+      return this.doCheckStatus(statusEntry, credential, didDoc)
+    } else if (Array.isArray(statusEntry) && statusEntry.length > 0 && statusEntry.every((entry) => !!entry?.type)) {
+      return Promise.all(statusEntry.map((entry) => this.doCheckStatus(entry, credential, didDoc)))
+    } else {
       throw new Error('bad_request: credentialStatus entry is not formatted correctly. Validity can not be determined.')
     }
+  }
 
+  private async doCheckStatus(statusEntry: StatusEntry, credential: CredentialJwtOrJSON, didDoc: DIDDocument) {
     const method = this.registry[statusEntry.type]
 
     if (!method) {
