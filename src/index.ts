@@ -142,21 +142,47 @@ export class Status implements StatusResolver {
       }
     } else if (typeof statusEntry === 'object' && (statusEntry as StatusEntry)?.type) {
       statusEntry = statusEntry as StatusEntry
-      return this.doCheckStatus(statusEntry, credential, didDoc)
+      return this.doCheckStatus(statusEntry.type, credential, didDoc)
     } else if (Array.isArray(statusEntry) && statusEntry.length > 0 && statusEntry.every((entry) => !!entry?.type)) {
-      return Promise.all(statusEntry.map((entry) => this.doCheckStatus(entry, credential, didDoc)))
+      const statusEntryGroupedByType = statusEntry.reduce(
+        (groupedByType, entry) => {
+          if (!groupedByType[entry.type]) {
+            groupedByType[entry.type] = []
+          }
+          groupedByType[entry.type].push(entry)
+          return groupedByType
+        },
+        {} as Record<string, StatusEntry[]>,
+      )
+      const statuses = await Promise.all(
+        Object.keys(statusEntryGroupedByType).map((type) => {
+          return this.doCheckStatus(type, credential, didDoc)
+        }),
+      )
+
+      return statuses.reduce(
+        (result, status) => {
+          if (status.revoked) {
+            result.revoked = true
+            result.errors = [...(result.errors || []), ...(status.errors || [])]
+          }
+          return result
+        },
+        {
+          revoked: false,
+          errors: [],
+        } as CredentialStatus,
+      )
     } else {
       throw new Error('bad_request: credentialStatus entry is not formatted correctly. Validity can not be determined.')
     }
   }
 
-  private async doCheckStatus(statusEntry: StatusEntry, credential: CredentialJwtOrJSON, didDoc: DIDDocument) {
-    const method = this.registry[statusEntry.type]
+  private async doCheckStatus(type: string, credential: CredentialJwtOrJSON, didDoc: DIDDocument) {
+    const method = this.registry[type]
 
     if (!method) {
-      throw new Error(
-        `unknown_method: credentialStatus method ${statusEntry.type} unknown. Validity can not be determined.`,
-      )
+      throw new Error(`unknown_method: credentialStatus method ${type} unknown. Validity can not be determined.`)
     } else {
       return method(credential, didDoc)
     }
